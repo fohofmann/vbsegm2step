@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=77.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vbsegm2step"
+version = "0.0.2"
+description = "Two-step vertebral body segmentation (global + sliding-window)"
+readme = "README.md"
+authors = [
+    {name = "Felix O. Hofmann"}
+]
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.8"
+
+dependencies = [
+    "numpy>=1.21.0",
+    "SimpleITK>=2.2.0",
+    "torch>=1.13.0",
+    "scipy>=1.9.0",
+    "nnunetv2>=2.0.0",
+    "tqdm>=4.64.0",
+    "huggingface-hub>=0.34.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "ipykernel",
+    "jupyter",
+    "matplotlib",
+]
+
+[project.scripts]
+vbsegm2step = "vbsegm2step.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/fohofmann/vbsegm2step"
+Repository = "https://github.com/fohofmann/vbsegm2step"
+"Task 601 Model" = "https://huggingface.co/fhofmann/VertebralBodiesCT-ResEncM"
+"Task 602 Model" = "https://huggingface.co/fhofmann/VertebralBodiesCT-Neighbors"
+"Training Labels" = "https://huggingface.co/datasets/fhofmann/VertebralBodiesCT-Labels"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vbsegm2step*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [
+    ".git",
+    ".venv",
+    "build",
+    "data",
+    "dev",
+    "dist",
+    "logs",
+    "models",
+    "output",
+    "outputs",
+    "*.egg-info",
+]
+filterwarnings = [
+    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+]

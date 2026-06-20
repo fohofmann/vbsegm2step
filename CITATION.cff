@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use VBSegm2Step, please cite this software and the associated model/data sources."
+title: "VBSegm2Step: Two-step vertebral body segmentation"
+type: software
+authors:
+  - family-names: Hofmann
+    given-names: Felix
+version: 0.0.2
+date-released: 2026-06-20
+repository-code: "https://github.com/fohofmann/vbsegm2step"
+url: "https://github.com/fohofmann/vbsegm2step"
+license: MIT
+abstract: "Python package and CLI for two-step vertebral body segmentation in CT using a global nnU-Net model, local neighbor refinement, and probability fusion."
+keywords:
+  - medical imaging
+  - CT
+  - vertebral body segmentation
+  - nnU-Net
+  - deep learning

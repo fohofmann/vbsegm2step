@@ -1,0 +1,9 @@
+include CITATION.cff
+prune data
+prune dev
+prune logs
+prune models
+prune output
+prune outputs
+recursive-exclude . *.nii
+recursive-exclude . *.nii.gz
