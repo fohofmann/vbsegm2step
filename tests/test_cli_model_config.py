@@ -6,24 +6,58 @@ import vbsegm2step.cli as cli
 from vbsegm2step.config import Config
 
 
-def _make_model_root(tmp_path: Path, name: str) -> Path:
+def _fold_dirs(folds):
+    if folds == "all":
+        return ["fold_all"]
+    return [f"fold_{fold}" for fold in folds]
+
+
+def _make_model_root(tmp_path: Path, name: str, trainer_folder: str, folds) -> Path:
     root = tmp_path / name
-    trainer = root / Config.TRAINER_FOLDER
-    (trainer / "fold_all").mkdir(parents=True)
+    trainer = root / trainer_folder
+    for fold_dir in _fold_dirs(folds):
+        (trainer / fold_dir).mkdir(parents=True)
+        (trainer / fold_dir / "checkpoint_final.pth").write_text("weights", encoding="utf-8")
     (trainer / "plans.json").write_text("{}", encoding="utf-8")
     (trainer / "dataset.json").write_text("{}", encoding="utf-8")
-    (trainer / "fold_all" / "checkpoint_final.pth").write_text("weights", encoding="utf-8")
     return root
 
 
 def test_config_from_overrides_keeps_default_paths_without_env_or_cli(monkeypatch):
     monkeypatch.delenv(Config.MODEL601_ENV, raising=False)
     monkeypatch.delenv(Config.MODEL602_ENV, raising=False)
+    monkeypatch.delenv(Config.MODEL601_VARIANT_ENV, raising=False)
 
     config = Config.from_overrides()
 
+    assert config.MODEL601_VARIANT == "ResEncL"
     assert config.PATH_NNUNET601 == Config.PATH_NNUNET601
     assert config.PATH_NNUNET602 == Config.PATH_NNUNET602
+    assert config.HF_NNUNET601 == "fhofmann/VertebralBodiesCT-ResEncL"
+    assert config.TRAINER_FOLDER_NNUNET601 == "nnUNetTrainer__nnUNetResEncUNetLPlans__3d_fullres"
+    assert config.FOLDS_NNUNET601 == (0, 1, 2, 3, 4)
+
+
+def test_config_from_overrides_switches_model601_variant_with_matching_contract(monkeypatch):
+    monkeypatch.delenv(Config.MODEL601_ENV, raising=False)
+    monkeypatch.delenv(Config.MODEL602_ENV, raising=False)
+    monkeypatch.setenv(Config.MODEL601_VARIANT_ENV, "ResEncM")
+
+    config = Config.from_overrides()
+
+    assert config.MODEL601_VARIANT == "ResEncM"
+    assert config.PATH_NNUNET601 == Path("./models/Dataset601_VertebralBodies/")
+    assert config.HF_NNUNET601 == "fhofmann/VertebralBodiesCT-ResEncM"
+    assert config.TRAINER_FOLDER_NNUNET601 == "nnUNetTrainer__nnUNetResEncUNetMPlans__3d_fullres"
+    assert config.FOLDS_NNUNET601 == "all"
+
+
+def test_config_from_overrides_cli_variant_takes_precedence_over_environment(monkeypatch):
+    monkeypatch.setenv(Config.MODEL601_VARIANT_ENV, "ResEncM")
+
+    config = Config.from_overrides(model601_variant="ResEncL")
+
+    assert config.MODEL601_VARIANT == "ResEncL"
 
 
 def test_config_from_overrides_uses_environment_paths(monkeypatch, tmp_path):
@@ -52,17 +86,56 @@ def test_config_from_overrides_cli_paths_take_precedence_over_environment(monkey
 
 def test_validate_model_paths_accepts_expected_nnunet_layout(tmp_path):
     config = Config()
-    config.PATH_NNUNET601 = _make_model_root(tmp_path, "model601")
-    config.PATH_NNUNET602 = _make_model_root(tmp_path, "model602")
+    config.PATH_NNUNET601 = _make_model_root(
+        tmp_path,
+        "model601",
+        config.TRAINER_FOLDER_NNUNET601,
+        config.FOLDS_NNUNET601,
+    )
+    config.PATH_NNUNET602 = _make_model_root(
+        tmp_path,
+        "model602",
+        config.TRAINER_FOLDER_NNUNET602,
+        config.FOLDS_NNUNET602,
+    )
 
     assert config.validate_model_paths()
 
 
 def test_validate_model_paths_rejects_missing_checkpoint(tmp_path):
     config = Config()
-    config.PATH_NNUNET601 = _make_model_root(tmp_path, "model601")
-    config.PATH_NNUNET602 = _make_model_root(tmp_path, "model602")
+    config.PATH_NNUNET601 = _make_model_root(
+        tmp_path,
+        "model601",
+        config.TRAINER_FOLDER_NNUNET601,
+        config.FOLDS_NNUNET601,
+    )
+    config.PATH_NNUNET602 = _make_model_root(
+        tmp_path,
+        "model602",
+        config.TRAINER_FOLDER_NNUNET602,
+        config.FOLDS_NNUNET602,
+    )
     (config.nnunet602_trainer_path() / "fold_all" / "checkpoint_final.pth").unlink()
+
+    assert not config.validate_model_paths()
+
+
+def test_validate_model_paths_rejects_missing_resencl_fold_checkpoint(tmp_path):
+    config = Config.from_overrides(model601_variant="ResEncL")
+    config.PATH_NNUNET601 = _make_model_root(
+        tmp_path,
+        "model601",
+        config.TRAINER_FOLDER_NNUNET601,
+        config.FOLDS_NNUNET601,
+    )
+    config.PATH_NNUNET602 = _make_model_root(
+        tmp_path,
+        "model602",
+        config.TRAINER_FOLDER_NNUNET602,
+        config.FOLDS_NNUNET602,
+    )
+    (config.nnunet601_trainer_path() / "fold_4" / "checkpoint_final.pth").unlink()
 
     assert not config.validate_model_paths()
 
@@ -70,8 +143,8 @@ def test_validate_model_paths_rejects_missing_checkpoint(tmp_path):
 def test_cli_predict_passes_model_overrides(monkeypatch, tmp_path):
     calls = []
 
-    def fake_predict(input_file, output_file, model601=None, model602=None):
-        calls.append((input_file, output_file, model601, model602))
+    def fake_predict(input_file, output_file, model601=None, model602=None, model601_variant=None):
+        calls.append((input_file, output_file, model601, model602, model601_variant))
 
     monkeypatch.setattr(cli, "predict", fake_predict)
     monkeypatch.setattr(
@@ -87,6 +160,8 @@ def test_cli_predict_passes_model_overrides(monkeypatch, tmp_path):
             str(tmp_path / "model601"),
             "--model602",
             str(tmp_path / "model602"),
+            "--model601-variant",
+            "ResEncM",
         ],
     )
 
@@ -98,8 +173,72 @@ def test_cli_predict_passes_model_overrides(monkeypatch, tmp_path):
             Path("seg.nii.gz"),
             tmp_path / "model601",
             tmp_path / "model602",
+            "ResEncM",
         )
     ]
+
+
+def test_download_model_specs_can_include_both_model601_variants(monkeypatch, tmp_path):
+    monkeypatch.delenv(Config.MODEL601_ENV, raising=False)
+    monkeypatch.delenv(Config.MODEL601_VARIANT_ENV, raising=False)
+    model602 = tmp_path / "model602"
+    config = Config.from_overrides(model602=model602)
+
+    specs = cli._download_model_specs(config, all_model601_variants=True)
+
+    assert specs == [
+        (
+            "nnU-Net 601 (ResEncL)",
+            "fhofmann/VertebralBodiesCT-ResEncL",
+            Path("./models/Dataset601_VertebralBodies_ResEncL/"),
+        ),
+        (
+            "nnU-Net 601 (ResEncM)",
+            "fhofmann/VertebralBodiesCT-ResEncM",
+            Path("./models/Dataset601_VertebralBodies/"),
+        ),
+        ("nnU-Net 602", "fhofmann/VertebralBodiesCT-Neighbors", model602),
+    ]
+
+
+def test_cli_downloadmodels_passes_all_model601_variants_flag(monkeypatch):
+    calls = []
+
+    def fake_download_models(
+        model601=None,
+        model602=None,
+        model601_variant=None,
+        all_model601_variants=False,
+    ):
+        calls.append((model601, model602, model601_variant, all_model601_variants))
+
+    monkeypatch.setattr(cli, "download_models", fake_download_models)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "vbsegm2step",
+            "downloadmodels",
+            "--all-model601-variants",
+        ],
+    )
+
+    cli.main()
+
+    assert calls == [(None, None, None, True)]
+
+
+def test_download_all_model601_variants_rejects_single_model601_path(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv(Config.MODEL601_ENV, raising=False)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.download_models(
+            model601=tmp_path / "single-model601",
+            all_model601_variants=True,
+        )
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "cannot be combined with --model601" in captured.out
 
 
 def test_cli_validate_exits_nonzero_for_invalid_layout(tmp_path):

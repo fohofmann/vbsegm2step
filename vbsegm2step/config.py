@@ -3,7 +3,7 @@
 import os
 import multiprocessing
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, Union
 import torch
 import numpy as np
 
@@ -11,14 +11,36 @@ import numpy as np
 class Config:
     """Configuration class for VBSegm2Step pipeline."""
 
+    MODEL601_VARIANT_ENV = "VBSEGM2STEP_MODEL601_VARIANT"
+    MODEL601_VARIANTS = {
+        "ResEncL": {
+            "path": Path("./models/Dataset601_VertebralBodies_ResEncL/"),
+            "hf": "fhofmann/VertebralBodiesCT-ResEncL",
+            "trainer": "nnUNetTrainer__nnUNetResEncUNetLPlans__3d_fullres",
+            "folds": (0, 1, 2, 3, 4),
+        },
+        "ResEncM": {
+            "path": Path("./models/Dataset601_VertebralBodies/"),
+            "hf": "fhofmann/VertebralBodiesCT-ResEncM",
+            "trainer": "nnUNetTrainer__nnUNetResEncUNetMPlans__3d_fullres",
+            "folds": "all",
+        },
+    }
+    DEFAULT_MODEL601_VARIANT = "ResEncL"
+    MODEL601_VARIANT = DEFAULT_MODEL601_VARIANT
+
     # Model paths - these should be updated for your system
-    PATH_NNUNET601 = Path("./models/Dataset601_VertebralBodies/")
+    PATH_NNUNET601 = MODEL601_VARIANTS[DEFAULT_MODEL601_VARIANT]["path"]
     PATH_NNUNET602 = Path("./models/Dataset602_VertebralBodiesNeighbors/")
-    HF_NNUNET601 = "fhofmann/VertebralBodiesCT-ResEncM"
+    HF_NNUNET601 = MODEL601_VARIANTS[DEFAULT_MODEL601_VARIANT]["hf"]
     HF_NNUNET602 = "fhofmann/VertebralBodiesCT-Neighbors"
     MODEL601_ENV = "VBSEGM2STEP_MODEL601"
     MODEL602_ENV = "VBSEGM2STEP_MODEL602"
-    TRAINER_FOLDER = "nnUNetTrainer__nnUNetResEncUNetMPlans__3d_fullres"
+    TRAINER_FOLDER_NNUNET601 = MODEL601_VARIANTS[DEFAULT_MODEL601_VARIANT]["trainer"]
+    TRAINER_FOLDER_NNUNET602 = "nnUNetTrainer__nnUNetResEncUNetMPlans__3d_fullres"
+    TRAINER_FOLDER = TRAINER_FOLDER_NNUNET602
+    FOLDS_NNUNET601: Union[str, Tuple[int, ...]] = MODEL601_VARIANTS[DEFAULT_MODEL601_VARIANT]["folds"]
+    FOLDS_NNUNET602: Union[str, Tuple[int, ...]] = "all"
 
     # nnUNet verbose
     NNUNET_VERBOSE = False
@@ -103,14 +125,34 @@ class Config:
             if label not in excluded
         ]
     
+    def configure_model601_variant(self, variant: str) -> None:
+        """Select the released Task 601 model variant and matching nnU-Net layout."""
+        if variant not in self.MODEL601_VARIANTS:
+            valid = ", ".join(sorted(self.MODEL601_VARIANTS))
+            raise ValueError(f"Unsupported model601 variant {variant!r}. Choose one of: {valid}.")
+
+        model = self.MODEL601_VARIANTS[variant]
+        self.MODEL601_VARIANT = variant
+        self.PATH_NNUNET601 = model["path"]
+        self.HF_NNUNET601 = model["hf"]
+        self.TRAINER_FOLDER_NNUNET601 = model["trainer"]
+        self.FOLDS_NNUNET601 = model["folds"]
+
     @classmethod
     def from_overrides(cls, model601: Optional[Path] = None,
-                       model602: Optional[Path] = None) -> "Config":
+                       model602: Optional[Path] = None,
+                       model601_variant: Optional[str] = None) -> "Config":
         """Create config from defaults, environment variables, and CLI overrides."""
         config = cls()
+        config.configure_model601_variant(cls.DEFAULT_MODEL601_VARIANT)
+        env_model601_variant = os.environ.get(cls.MODEL601_VARIANT_ENV)
         env_model601 = os.environ.get(cls.MODEL601_ENV)
         env_model602 = os.environ.get(cls.MODEL602_ENV)
 
+        if env_model601_variant:
+            config.configure_model601_variant(env_model601_variant)
+        if model601_variant is not None:
+            config.configure_model601_variant(model601_variant)
         if env_model601:
             config.PATH_NNUNET601 = Path(env_model601)
         if env_model602:
@@ -123,13 +165,19 @@ class Config:
 
     def nnunet601_trainer_path(self) -> Path:
         """Return expected nnU-Net 601 trainer folder under the model root."""
-        return Path(self.PATH_NNUNET601) / self.TRAINER_FOLDER
+        return Path(self.PATH_NNUNET601) / self.TRAINER_FOLDER_NNUNET601
 
     def nnunet602_trainer_path(self) -> Path:
         """Return expected nnU-Net 602 trainer folder under the model root."""
-        return Path(self.PATH_NNUNET602) / self.TRAINER_FOLDER
+        return Path(self.PATH_NNUNET602) / self.TRAINER_FOLDER_NNUNET602
 
-    def _validate_model_root(self, title: str, root: Path, trainer_path: Path) -> bool:
+    def _fold_dirs(self, folds: Union[str, Tuple[int, ...]]) -> List[str]:
+        if folds == "all":
+            return ["fold_all"]
+        return [f"fold_{fold}" for fold in folds]
+
+    def _validate_model_root(self, title: str, root: Path, trainer_path: Path,
+                             folds: Union[str, Tuple[int, ...]]) -> bool:
         ok = True
         if not root.exists():
             print(f"❌ {title} model root does not exist: {root}")
@@ -142,10 +190,11 @@ class Config:
             if not metadata_path.exists():
                 print(f"❌ {title} metadata file does not exist: {metadata_path}")
                 ok = False
-        checkpoint_path = trainer_path / "fold_all" / "checkpoint_final.pth"
-        if not checkpoint_path.exists():
-            print(f"❌ {title} checkpoint does not exist: {checkpoint_path}")
-            ok = False
+        for fold_dir in self._fold_dirs(folds):
+            checkpoint_path = trainer_path / fold_dir / "checkpoint_final.pth"
+            if not checkpoint_path.exists():
+                print(f"❌ {title} checkpoint does not exist: {checkpoint_path}")
+                ok = False
         return ok
 
     def validate_model_paths(self) -> bool:
@@ -154,11 +203,13 @@ class Config:
             "nnU-Net 601",
             Path(self.PATH_NNUNET601),
             self.nnunet601_trainer_path(),
+            self.FOLDS_NNUNET601,
         )
         nnunet602_ok = self._validate_model_root(
             "nnU-Net 602",
             Path(self.PATH_NNUNET602),
             self.nnunet602_trainer_path(),
+            self.FOLDS_NNUNET602,
         )
 
         return nnunet601_ok and nnunet602_ok
@@ -171,6 +222,6 @@ class Config:
             f"  Volume range: {self.MIN_VERTEBRA_VOLUME_CM3}-{self.MAX_VERTEBRA_VOLUME_CM3} cm³\n"
             f"  Border expansion: {self.EXPANSION_MM}mm, max {self.MAX_EXPANSION_ITERATIONS} iterations\n"
             f"  Padding: {self.PAD_X}/{self.PAD_Y}/{self.PAD_Z}mm (x/y/z)\n"
-            f"  nnUNet601: {self.PATH_NNUNET601}\n"
+            f"  nnUNet601: {self.PATH_NNUNET601} ({self.MODEL601_VARIANT}, folds={self.FOLDS_NNUNET601})\n"
             f"  nnUNet602: {self.PATH_NNUNET602}\n"
         )

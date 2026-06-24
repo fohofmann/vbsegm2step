@@ -3,6 +3,7 @@
 import sys
 import argparse
 import glob
+import os
 from pathlib import Path
 from typing import List
 
@@ -11,9 +12,14 @@ from .pipeline import VBSegm2StepPipeline
 from .utils import same_path
 
 
-def build_config(model601: Path = None, model602: Path = None) -> Config:
+def build_config(model601: Path = None, model602: Path = None,
+                 model601_variant: str = None) -> Config:
     """Build config using defaults, env vars, then explicit CLI overrides."""
-    return Config.from_overrides(model601=model601, model602=model602)
+    return Config.from_overrides(
+        model601=model601,
+        model602=model602,
+        model601_variant=model601_variant,
+    )
 
 
 def _matched_input_files(input_dir: Path, pattern: str) -> List[Path]:
@@ -23,7 +29,8 @@ def _matched_input_files(input_dir: Path, pattern: str) -> List[Path]:
 
 
 def batch(input_dir: Path, output_dir: Path, pattern: str = '*.nii.gz',
-          model601: Path = None, model602: Path = None):
+          model601: Path = None, model602: Path = None,
+          model601_variant: str = None):
     """Process multiple CT scans in batch mode.
     
     Args:
@@ -43,7 +50,11 @@ def batch(input_dir: Path, output_dir: Path, pattern: str = '*.nii.gz',
 
     # Create config
     print("Initializing Pipeline for batch processing...")
-    config = build_config(model601=model601, model602=model602)
+    config = build_config(
+        model601=model601,
+        model602=model602,
+        model601_variant=model601_variant,
+    )
     print(str(config))
     
     try:
@@ -67,7 +78,7 @@ def batch(input_dir: Path, output_dir: Path, pattern: str = '*.nii.gz',
 
 
 def predict(input_file: Path, output_file: Path, model601: Path = None,
-            model602: Path = None):
+            model602: Path = None, model601_variant: str = None):
     """Process a single CT scan file.
 
     Args:
@@ -91,7 +102,11 @@ def predict(input_file: Path, output_file: Path, model601: Path = None,
 
     # Create config
     print("Initializing Pipeline for single-file prediction...")
-    config = build_config(model601=model601, model602=model602)
+    config = build_config(
+        model601=model601,
+        model602=model602,
+        model601_variant=model601_variant,
+    )
     print(str(config))
 
     try:
@@ -113,10 +128,15 @@ def predict(input_file: Path, output_file: Path, model601: Path = None,
         sys.exit(1)
 
 
-def validate(model601: Path = None, model602: Path = None):
+def validate(model601: Path = None, model602: Path = None,
+             model601_variant: str = None):
     """Validate model paths and configuration."""
     # Create config
-    config = build_config(model601=model601, model602=model602)
+    config = build_config(
+        model601=model601,
+        model602=model602,
+        model601_variant=model601_variant,
+    )
     print("Validating configuration...")
     print(str(config))
     
@@ -136,22 +156,65 @@ def validate(model601: Path = None, model602: Path = None):
         print(f"❌ Model initialization failed: {e}")
         sys.exit(1)
 
-def download_models(model601: Path = None, model602: Path = None):
+def _download_model_specs(config: Config, all_model601_variants: bool = False):
+    if not all_model601_variants:
+        return [
+            ("nnU-Net 601", config.HF_NNUNET601, config.PATH_NNUNET601),
+            ("nnU-Net 602", config.HF_NNUNET602, config.PATH_NNUNET602),
+        ]
+
+    specs = []
+    for variant in sorted(Config.MODEL601_VARIANTS):
+        variant_config = Config.from_overrides(model601_variant=variant)
+        specs.append((
+            f"nnU-Net 601 ({variant})",
+            variant_config.HF_NNUNET601,
+            variant_config.PATH_NNUNET601,
+        ))
+    specs.append(("nnU-Net 602", config.HF_NNUNET602, config.PATH_NNUNET602))
+    return specs
+
+
+def _validate_downloaded_models(config: Config, all_model601_variants: bool = False) -> bool:
+    if not all_model601_variants:
+        return config.validate_model_paths()
+
+    ok = True
+    for variant in sorted(Config.MODEL601_VARIANTS):
+        variant_config = Config.from_overrides(
+            model602=config.PATH_NNUNET602,
+            model601_variant=variant,
+        )
+        ok = variant_config.validate_model_paths() and ok
+    return ok
+
+
+def download_models(model601: Path = None, model602: Path = None,
+                    model601_variant: str = None,
+                    all_model601_variants: bool = False):
     """Download model weights defined in the config via Hugging Face.
 
     Uses the Hugging Face repo IDs and local paths from `Config`.
     Only runs when invoked via the CLI command `downloadmodels`.
     """
-    config = build_config(model601=model601, model602=model602)
+    if all_model601_variants and (model601 is not None or os.environ.get(Config.MODEL601_ENV)):
+        print(
+            f"❌ --all-model601-variants cannot be combined with --model601 "
+            f"or ${Config.MODEL601_ENV}; each released variant has its own configured path."
+        )
+        sys.exit(1)
+
+    config = build_config(
+        model601=model601,
+        model602=model602,
+        model601_variant=model601_variant,
+    )
     print("Downloading models using Hugging Face Hub...")
     print(str(config))
 
     from huggingface_hub import snapshot_download
 
-    models = [
-        ("nnU-Net 601", config.HF_NNUNET601, config.PATH_NNUNET601),
-        ("nnU-Net 602", config.HF_NNUNET602, config.PATH_NNUNET602),
-    ]
+    models = _download_model_specs(config, all_model601_variants=all_model601_variants)
 
     any_failed = False
     for title, repo_id, local_dir in models:
@@ -188,7 +251,10 @@ def download_models(model601: Path = None, model602: Path = None):
             print(f"❌ Failed to download {title} from {repo_id}: {e}")
 
     # Final validation of paths
-    if not any_failed and config.validate_model_paths():
+    if not any_failed and _validate_downloaded_models(
+        config,
+        all_model601_variants=all_model601_variants,
+    ):
         print("✅ All model paths present after download")
     elif any_failed:
         print("⚠️ Some downloads failed. Please check errors above.")
@@ -205,6 +271,15 @@ def main():
     subparsers = parser.add_subparsers(dest='command', required=True, help='Available commands')
 
     def add_model_args(subparser):
+        subparser.add_argument(
+            '--model601-variant',
+            choices=sorted(Config.MODEL601_VARIANTS),
+            default=None,
+            help=(
+                f'Task 601 released model variant. Overrides ${Config.MODEL601_VARIANT_ENV}; '
+                f'default: {Config.DEFAULT_MODEL601_VARIANT}.'
+            ),
+        )
         subparser.add_argument(
             '--model601',
             type=Path,
@@ -232,6 +307,11 @@ def main():
     # Download command
     download_parser = subparsers.add_parser('downloadmodels', help='Download model weights')
     add_model_args(download_parser)
+    download_parser.add_argument(
+        '--all-model601-variants',
+        action='store_true',
+        help='Download both released Task 601 variants, ResEncL and ResEncM, plus Task 602.',
+    )
     
     # Predict single file command
     predict_parser = subparsers.add_parser('predict', help='Predict a single CT scan file')
@@ -249,6 +329,7 @@ def main():
                 pattern=args.pattern,
                 model601=args.model601,
                 model602=args.model602,
+                model601_variant=args.model601_variant,
             )
         elif args.command == 'predict':
             predict(
@@ -256,11 +337,21 @@ def main():
                 output_file=args.output_file,
                 model601=args.model601,
                 model602=args.model602,
+                model601_variant=args.model601_variant,
             )
         elif args.command == 'validate':
-            validate(model601=args.model601, model602=args.model602)
+            validate(
+                model601=args.model601,
+                model602=args.model602,
+                model601_variant=args.model601_variant,
+            )
         elif args.command == 'downloadmodels':
-            download_models(model601=args.model601, model602=args.model602)
+            download_models(
+                model601=args.model601,
+                model602=args.model602,
+                model601_variant=args.model601_variant,
+                all_model601_variants=args.all_model601_variants,
+            )
         else:
             parser.print_help()
             

@@ -42,7 +42,7 @@ class SpinePredictor:
             # Load model
             self.predictor.initialize_from_trained_model_folder(
                 str(self.config.nnunet601_trainer_path()),
-                use_folds='all',
+                use_folds=self.config.FOLDS_NNUNET601,
                 checkpoint_name='checkpoint_final.pth',
             )
             

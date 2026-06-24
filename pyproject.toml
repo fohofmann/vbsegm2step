@@ -39,7 +39,8 @@ vbsegm2step = "vbsegm2step.cli:main"
 [project.urls]
 Homepage = "https://github.com/fohofmann/vbsegm2step"
 Repository = "https://github.com/fohofmann/vbsegm2step"
-"Task 601 Model" = "https://huggingface.co/fhofmann/VertebralBodiesCT-ResEncM"
+"Task 601 Model" = "https://huggingface.co/fhofmann/VertebralBodiesCT-ResEncL"
+"Task 601 Model ResEncM" = "https://huggingface.co/fhofmann/VertebralBodiesCT-ResEncM"
 "Task 602 Model" = "https://huggingface.co/fhofmann/VertebralBodiesCT-Neighbors"
 "Training Labels" = "https://huggingface.co/datasets/fhofmann/VertebralBodiesCT-Labels"
 

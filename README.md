@@ -25,21 +25,26 @@ VBSegm2Step provides automated vertebral body segmentation for CT using a robust
 
 ## Model Weights (Hugging Face)
 This package uses two trained nnU‑Net v2 models:
-- Task 601 (whole spine): https://huggingface.co/fhofmann/VertebralBodiesCT-ResEncM
+- Task 601 (whole spine, default): https://huggingface.co/fhofmann/VertebralBodiesCT-ResEncL
+- Task 601 (smaller/faster alternative): https://huggingface.co/fhofmann/VertebralBodiesCT-ResEncM
 - Task 602 (neighbors): https://huggingface.co/fhofmann/VertebralBodiesCT-Neighbors
 
 Ways to provide models:
 - Use the built‑in downloader (Hugging Face Hub) to populate the configured folders:
-  - `vbsegm2step downloadmodels`
+  - `vbsegm2step downloadmodels` downloads the default Task 601 `ResEncL` model and Task 602.
+  - `vbsegm2step downloadmodels --model601-variant ResEncM` downloads the smaller Task 601 `ResEncM` model and Task 602.
+  - `vbsegm2step downloadmodels --all-model601-variants` downloads both Task 601 variants and Task 602.
 - Place existing model snapshot roots at the paths in `vbsegm2step/config.py`.
 - Override paths with CLI arguments, environment variables, or Python `Config()` attributes (see Configuration).
 
 ## Quickstart (CLI)
 - Validate model paths and model initialization: `uv run vbsegm2step validate`
 - Download models: `uv run vbsegm2step downloadmodels`
+- Download both Task 601 variants: `uv run vbsegm2step downloadmodels --all-model601-variants`
 - Predict a single file: `uv run vbsegm2step predict -i /path/ct.nii.gz -o /path/out_seg.nii.gz`
 - Batch over a directory: `uv run vbsegm2step batch -i /data/ct_scans -o /data/out_segs -p "*.nii.gz"`
 - Recursive batch over nested directories: `uv run vbsegm2step batch -i /data/ct_scans -o /data/out_segs -p "**/*.nii.gz"`
+- Use the smaller Task 601 model: `uv run vbsegm2step predict --model601-variant ResEncM -i /path/ct.nii.gz -o /path/out_seg.nii.gz`
 
 ## Quickstart (Python)
 ```python
@@ -53,6 +58,9 @@ config = Config()
 # config = Config()
 # config.PATH_NNUNET601 = Path("/models/Dataset601_VertebralBodies")
 # config.PATH_NNUNET602 = Path("/models/Dataset602_VertebralBodiesNeighbors")
+
+# Option C: use the smaller/faster released Task 601 model
+# config = Config.from_overrides(model601_variant="ResEncM")
 
 pipeline = VBSegm2StepPipeline(config)
 
@@ -85,6 +93,7 @@ For the released models, these label values are part of the model contract: Task
 - File: `vbsegm2step/config.py`
 - Key settings:
   - `PATH_NNUNET601`, `PATH_NNUNET602`: model snapshot roots containing the expected nnU-Net v2 trainer folder.
+  - `MODEL601_VARIANT`: released Task 601 variant, `ResEncL` by default; set to `ResEncM` for the smaller/faster model.
   - Device auto‑selection (CUDA if available, else CPU).
   - Padding for initial crops (`PAD_X/Y/Z` in mm) and adaptive crop expansion (`EXPANSION_MM`).
   - Conservative fusion thresholds and volume plausibility checks.
@@ -92,12 +101,13 @@ For the released models, these label values are part of the model contract: Task
   - Fusion memory control: `FUSION_SLAB_Z` sets Z‑slab size for streaming fusion (default 16). Lower if you see OOMs on very large volumes.
 
 Changing model locations:
-- Default: `downloadmodels`, `validate`, `predict`, and `batch` work with the package defaults under `./models/` when the model snapshots are present there.
-- CLI: pass `--model601 /path/to/Dataset601_VertebralBodies` and `--model602 /path/to/Dataset602_VertebralBodiesNeighbors`.
-- Environment: set `VBSEGM2STEP_MODEL601` and `VBSEGM2STEP_MODEL602`.
+- Default: `downloadmodels`, `validate`, `predict`, and `batch` use Task 601 `ResEncL` under `./models/Dataset601_VertebralBodies_ResEncL/` and Task 602 under `./models/` when the model snapshots are present there.
+- CLI: pass `--model601-variant ResEncM` or `--model601-variant ResEncL` to switch the released Task 601 model. Pass `--model601 /path/to/Dataset601_VertebralBodies...` and `--model602 /path/to/Dataset602_VertebralBodiesNeighbors` to override exact paths.
+- CLI download setup: pass `downloadmodels --all-model601-variants` to fetch both released Task 601 variants. This mode uses the configured per-variant default paths and cannot be combined with a single `--model601` path override.
+- Environment: set `VBSEGM2STEP_MODEL601_VARIANT`, `VBSEGM2STEP_MODEL601`, and `VBSEGM2STEP_MODEL602`.
 - Python: set instance attributes on `Config()` before building the pipeline (see example above). The same config instance is used for model paths, crop padding/expansion, label mapping, canvas dtype, and fusion slab size.
 
-Model path precedence is: CLI arguments, then environment variables, then `Config()` defaults. Model paths point to the dataset model roots that contain `nnUNetTrainer__nnUNetResEncUNetMPlans__3d_fullres/fold_all/checkpoint_final.pth`.
+Model path precedence is: CLI arguments, then environment variables, then `Config()` defaults. Model paths point to the dataset model roots. The expected Task 601 trainer folder follows the selected variant: `nnUNetTrainer__nnUNetResEncUNetLPlans__3d_fullres` for `ResEncL`, or `nnUNetTrainer__nnUNetResEncUNetMPlans__3d_fullres` for `ResEncM`.
 
 ## How It Works (High‑Level)
 1. Whole‑spine segmentation (Task 601) predicts vertebrae across the entire scan and estimates per‑label probabilities.
@@ -120,7 +130,7 @@ Model path precedence is: CLI arguments, then environment variables, then `Confi
 
 ## Troubleshooting
 - “Model path does not exist”: Update `PATH_NNUNET601/602` in `vbsegm2step/config.py` or run `vbsegm2step downloadmodels`.
-- “nnU‑Net predictor not initialized”: Ensure nnU‑Net v2 is installed and the model roots contain `nnUNetTrainer__nnUNetResEncUNetMPlans__3d_fullres/fold_all/checkpoint_final.pth`.
+- “nnU‑Net predictor not initialized”: Ensure nnU‑Net v2 is installed and the model roots contain the selected variant’s expected trainer folder and checkpoints. `ResEncL` expects `fold_0` through `fold_4`; `ResEncM` expects `fold_all`.
 - Input orientation/spacing: SimpleITK loader casts to float32, re‑orients to RAS, and preserves metadata on save.
 
 ## License
@@ -134,7 +144,8 @@ Model path precedence is: CLI arguments, then environment variables, then `Confi
 If you use this software, cite this repository using `CITATION.cff`. A DOI is pending and should be added here once available.
 
 Please also cite separately:
-- Task 601 model weights: https://huggingface.co/fhofmann/VertebralBodiesCT-ResEncM
+- Task 601 model weights: https://huggingface.co/fhofmann/VertebralBodiesCT-ResEncL
+- Task 601 smaller/faster alternative: https://huggingface.co/fhofmann/VertebralBodiesCT-ResEncM
 - Task 602 model weights: https://huggingface.co/fhofmann/VertebralBodiesCT-Neighbors
 - VertebralBodiesCT-Labels dataset: https://huggingface.co/datasets/fhofmann/VertebralBodiesCT-Labels
 - nnU-Net v2 according to its upstream citation instructions,
